@@ -2,24 +2,13 @@ library(readr)
 library(shiny)
 library(shinythemes)
 library(dplyr)
-library(igraph)
+library(ggplot2)
+
 library(visNetwork)
-library(shinythemes)
-
-#early_june_trips <- readRDS("C:/Users/Konrad/Desktop/Intro to Networks/Term Project/Early June Trips.rds")
-
-#early_june_trips <- early_june_trips %>%
-#  select(from = StartHub, to = EndHub, weight = n)
-
-#early_june_trips$from <- as.character(early_june_trips$from)
-#early_june_trips$to <- as.character(early_june_trips$to)
-hub_locations <- readRDS("C:/Users/Konrad/Desktop/Intro to Networks/Term Project/Hub Locations.rds")
-#weather_data <- readr::read_csv("C:/Users/Konrad/Downloads/1360236.csv")
-#weather_data$STATION <- NULL
+library(igraph)
 
 
-#trips %>% 
-#  left_join(weather_data, by = c("StartDate" = "DATE"))
+hub_locations <- readRDS("Hub Locations.rds")
 
 ui <- fluidPage(theme = shinytheme("flatly"),
                 #shinythemes::themeSelector(),
@@ -66,21 +55,44 @@ in what time of day/week/year they ride, but also in the nodes they are likely t
                p('Given an appropriate amount of time for trips to occur, multiple trips will occur between hubs, and the flow of bikes between hubs has strong importance
 for the operational aspect of supplying bikes. On an aggregated level, which can be useful when dealing with thousands or millions of trips, 
 the flows between hubs can be intuitively seen as a weighted property: while each trip has a weight of only one, on a larger scale the directed edge weight between hubs 
-is the sum of the trips between the start and end hub. Which hubs see lots of traffic and which do not is an intersting and useful characteristic of the system.')
+is the sum of the trips between the start and end hub. Which hubs see lots of traffic and which do not is an interesting and useful characteristic of the system.')
 
 ),
-      tabPanel("How to use"),
+      tabPanel("Materials",
+               h3('References'),
+               p('Barthelemy, Marc. "Spatial Networks." Physics Reports, vol. 499, no. 1, 2011, pp. 1-101.'),
+               p('Rombach, Puck, et al. "Core-Periphery Structure in Networks (Revisited)." SIAM Review, vol. 59, no. 3, 2017, pp. 619-646.'),
+               p('Expert, Paul, et al. "Uncovering Space-Independent Communities in Spatial Networks." 
+                 Proceedings of the National Academy of Sciences of the United States of America, vol. 108, no. 19, 2011, pp. 7663-8.'),
+               p('Zaltz Austwick, Martin, et al. "The Structure of Spatial Networks and Communities in Bicycle Sharing Systems." PLoS ONE, vol. 8, no. 9, 2013, p. e74685.'),
+               h3('Dataset'),
+               a(href="https://www.biketownpdx.com/system-data", "BikeTown System Data", target = "_blank"),
+               h3('Graphical interpretation packages'),
+               strong('shiny'), p(),
+               strong('igraph'), p(),
+               strong('visNetwork')
+               ),
       "Network",
       #tabsetPanel("Network Visualiztion", type = "tabs",
+        tabPanel("Network Properties",
+                 h4("By default, the network shown is from the entire trips dataset. To dig deeper, filter by date or time."),
+                 h3("Network properties: "),
+                 p("Node size is proportional to the total degree of the node, while edge width is proportional to the out-degree. 
+                   Edges are colored gray if they both nodes are in the same neighborhood (N, NE, NW, etc) and colored blue if they are not.")
+                 ),
         tabPanel("Dynamic Network",
           sidebarLayout(
             sidebarPanel(width = 2, position = "left",
               dateRangeInput("tripDate", label = "Trip Date Range", start = "2016-07-01", end = Sys.Date()),
+              #sliderInput("tripDate", "Choose Date Range:", 
+              #            min = as.Date("2016-07-19"), max = Sys.Date(), 
+              #            value = c(as.Date("2016-07-19"), as.Date("2016-07-19")),
+              #            animate = TRUE),
               sliderInput("time", label = "Trip start time", min = 0, max = 23.5, step = 0.5, value = c(0,23.5)),
               radioButtons("weekend", "Weekend Trips", choices = c("Yes", "No", "Both"), selected = "Both")
             ),
             mainPanel(
-              visNetworkOutput("network", height = "auto", width = "auto")
+              visNetworkOutput("network", height = "500", width = "800")
             )
         )),
 
@@ -88,8 +100,9 @@ is the sum of the trips between the start and end hub. Which hubs see lots of tr
           tableOutput("avgDegree")),
       #),
       tabPanel("Degree Distributions",
-        plotOutput("degreeDist")),
-      tabPanel("Static Networks"),
+        plotOutput("degreeDist"),
+        plotOutput("components")),
+      #tabPanel("Static Networks"),
 
       widths = c(2,10)
     )
@@ -103,7 +116,7 @@ server <- function(input, output){
     trips <- readRDS("All Trips.rds")
     
     filt_trips <- trips %>%
-      filter(StartDate >= input$tripDate[1] & StartDate < input$tripDate[2] &
+      filter(StartDate >= input$tripDate[1] & StartDate <= input$tripDate[2] &
         StartTime >= input$time[1] * 60 * 60 & StartTime < input$time[2] * 60 * 60 & 
           !is.na(StartHub) & !is.na(EndHub))
     
@@ -121,7 +134,7 @@ server <- function(input, output){
     #od_matrix <- network_od()
     trips_data <- network_data()
 
-    early_graph <- graph_from_edgelist(cbind(trips_data$from, trips_data$to), directed = TRUE)
+    early_graph <- igraph::graph_from_edgelist(cbind(trips_data$from, trips_data$to), directed = TRUE)
     #early_graph <- igraph::graph_from_edgelist(cbind(early_june_trips$from, early_june_trips$to), directed = TRUE)
 
     #early_graph <- igraph::graph_from_adjacency_matrix(as.matrix(od_matrix), weighted = TRUE, mode = "directed")
@@ -190,7 +203,8 @@ server <- function(input, output){
                             AvgDegree = avg_connected_nodes$Mean,
                             AvgPathLength =  average.path.length(early_graph, directed = TRUE),
                             #Diameter = diameter(early_graph),
-                           Density = density)
+                           Density = density,
+                           Clustering = transitivity(early_graph))
     
     average.path.length(early_graph, directed = TRUE)
     return(summary_stats)
@@ -210,7 +224,7 @@ server <- function(input, output){
       #visEdges(color = "#b6bcc6", arrows = "none") %>%
       visEdges(arrows = "none") %>%
       visOptions(highlightNearest = TRUE) %>%
-      visInteraction(dragNodes = FALSE, hover = TRUE) #%>%
+      visInteraction(dragNodes = FALSE, hover = TRUE, keyboard = TRUE) 
       #visEvents(click = "function(nodes){
       #            Shiny.onInputChange('click', nodes.nodes[0]);
       #          ;}"
@@ -222,8 +236,31 @@ server <- function(input, output){
     #  popup.classList.toggle('show');}")
     
     })
+  
+  output$degreeDist <- renderPlot({
+    early_graph <- network_graph()
     
-  #})
+    my_data <- data.frame(Degree = degree(early_graph))
+    ggplot(my_data, aes(Degree)) +
+      geom_histogram() + 
+      theme_minimal()
+  })
+  
+  output$components <- renderPlot({
+    early_graph <- network_graph()
+    
+    my_data <- data.frame(Var = c("Components", "Nodes"), Val= c(components(early_graph)$no,
+                                                                 vcount(early_graph)))
+    
+    ggplot(my_data, aes(Var, Val)) + 
+      geom_bar(stat = "identity") + 
+      ylab("Count") + 
+      xlab("Variable") + 
+      theme_minimal()
+  })
+  
+    
+  
 }
 
 shinyApp(ui = ui, server = server)
